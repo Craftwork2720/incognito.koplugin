@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build ZIP
+        run: zip -r incognito.koplugin.zip incognito.koplugin/ -x "incognito.koplugin/screenshots/*" -x "incognito.koplugin/LICENSE" -x "incognito.koplugin/README.md"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: incognito.koplugin.zip
+          generate_release_notes: true
