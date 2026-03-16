@@ -29,3 +29,5 @@ Long-press any book in the file browser → tap **Open Incognito**.
 ## Compatibility
 
 Tested on KOReader 2025.10. and night Should work on any recent version.
+
+#### My  [User Patches](https://github.com/Craftwork2720/koreader-patches) for KOReader. ❤️
