@@ -14,7 +14,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build ZIP
-        run: zip -r incognito.koplugin.zip incognito.koplugin/ -x "incognito.koplugin/screenshots/*" -x "incognito.koplugin/LICENSE" -x "incognito.koplugin/README.md"
+        run: |
+          mkdir incognito.koplugin
+          cp main.lua _meta.lua incognito.koplugin/
+          zip -r incognito.koplugin.zip incognito.koplugin/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
