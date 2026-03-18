@@ -1,4 +1,5 @@
-# incognito.koplugin
+# incognito.koplugin [![Download incognito.koplugin.zip](https://img.shields.io/badge/Download-incognito.koplugin.zip-blue?style=for-the-badge&logo=github&logoColor=white&labelColor=1f2328)](https://github.com/Craftwork2720/incognito.koplugin/releases/latest/download/incognito.koplugin.zip)
+
 
 A KOReader plugin that lets you open a book without leaving any trace.
 
