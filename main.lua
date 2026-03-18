@@ -10,18 +10,18 @@ local logger          = require("logger")
 
 local PLUGIN_ICONS_DIR = "plugins/incognito.koplugin/icons"
 local ICON_NAME        = "cre.incognito"
+local ORIG_ICON_NAME   = "cre.render.reload"
 
 local M = {
-    _active = false,
-    _file   = nil,
+    _active  = false,
+    _file    = nil,
+    _flipping = nil,  -- keep reference to restore icon on close
 }
 
--- Patch IconWidget.init to resolve our icon name to the plugin's SVG file
 local ok_iw, IconWidget = pcall(require, "ui/widget/iconwidget")
 if ok_iw and IconWidget then
-    local lfs = require("libs/libkoreader-lfs")
     local icon_path = PLUGIN_ICONS_DIR .. "/" .. ICON_NAME .. ".svg"
-    logger.warn("Incognito: icon path exists:", lfs.attributes(icon_path, "mode") == "file", icon_path)
+    logger.warn("Incognito: icon path exists:", require("libs/libkoreader-lfs").attributes(icon_path, "mode") == "file", icon_path)
     local orig_init = IconWidget.init
     IconWidget.init = function(self_iw, ...)
         if self_iw.icon == ICON_NAME and not self_iw.file and not self_iw.image then
@@ -32,18 +32,16 @@ if ok_iw and IconWidget then
     end
 end
 
--- Patch ReaderFlipping class directly so the icon is set before any instance
--- caches its widgets
 local ok_rf, ReaderFlipping = pcall(require, "apps/reader/modules/readerflipping")
 if ok_rf and ReaderFlipping then
     local orig_rf_init = ReaderFlipping.init
     ReaderFlipping.init = function(self_rf, ...)
         orig_rf_init(self_rf, ...)
-        -- Override at instance level after init, so it's always fresh
         if M._active then
             self_rf.rolling_rendering_state_icons["RELOADING_DOCUMENT"] = ICON_NAME
             self_rf.rolling_rendering_state_widgets = nil
-            logger.warn("Incognito: set RELOADING_DOCUMENT icon on ReaderFlipping init")
+            M._flipping = self_rf
+            logger.warn("Incognito: set icon on ReaderFlipping init")
         end
     end
 end
@@ -123,6 +121,12 @@ UIManager:scheduleIn(0, function()
             return orig_onClose(self_rui, ...)
         end
         local closed_file = M._file
+        -- Restore original icon using saved reference
+        if M._flipping then
+            M._flipping.rolling_rendering_state_icons["RELOADING_DOCUMENT"] = ORIG_ICON_NAME
+            M._flipping.rolling_rendering_state_widgets = nil
+            M._flipping = nil
+        end
         local ret = orig_onClose(self_rui, ...)
         M._active = false
         M._file   = nil
@@ -164,17 +168,5 @@ local Incognito = WidgetContainer:extend{
 
 function Incognito:onDispatcherRegisterActions() end
 function Incognito:init() self:onDispatcherRegisterActions() end
-
-function Incognito:onReaderReady()
-    if not M._active then return end
-    local flipping = self.ui and self.ui.flipping
-    if not flipping then
-        logger.warn("Incognito: onReaderReady – no flipping module found")
-        return
-    end
-    flipping.rolling_rendering_state_icons["RELOADING_DOCUMENT"] = ICON_NAME
-    flipping.rolling_rendering_state_widgets = nil
-    logger.warn("Incognito: onReaderReady – set RELOADING_DOCUMENT icon on instance")
-end
 
 return Incognito
