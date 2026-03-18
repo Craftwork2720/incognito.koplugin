@@ -7,7 +7,6 @@ writing document settings to disk, or logging reading statistics.
 @module koplugin.incognito
 --]]--
 
-local Dispatcher      = require("dispatcher")
 local UIManager       = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _               = require("gettext")
@@ -50,8 +49,6 @@ if ok_rh and ReadHistory then
 end
 
 -- ── DocumentRegistry patch ───────────────────────────────────────────────────
--- Setting is_pic = true on the document object prevents KOReader from writing
--- sidecar / statistics data for this session.
 local ok_dr, DocumentRegistry = pcall(require, "document/documentregistry")
 if ok_dr and DocumentRegistry then
 
@@ -59,15 +56,96 @@ if ok_dr and DocumentRegistry then
     DocumentRegistry.openDocument = function(self, file, provider)
         local doc = orig_openDocument(self, file, provider)
         if doc and M._active and file == M._file then
-            logger.dbg("Incognito: setting is_pic on document to suppress sidecar writes")
+            logger.dbg("Incognito: setting is_pic on document")
             doc.is_pic = true
         end
         return doc
     end
 end
 
+-- ── DocSettings class-level patch ────────────────────────────────────────────
+local ok_ds, DocSettings = pcall(require, "docsettings")
+if ok_ds and DocSettings then
+
+    local orig_flush = DocSettings.flush
+    DocSettings.flush = function(self_ds, ...)
+        if M._active then
+            logger.warn("Incognito: BLOCKED DocSettings:flush()")
+            return
+        end
+        return orig_flush(self_ds, ...)
+    end
+
+else
+    logger.warn("Incognito: WARNING – could not patch DocSettings.flush!")
+end
+
+-- ── ReaderUI patches ─────────────────────────────────────────────────────────
+UIManager:scheduleIn(0, function()
+    local ok_rui, ReaderUI = pcall(require, "apps/reader/readerui")
+    if not ok_rui or not ReaderUI then
+        logger.warn("Incognito: could not patch ReaderUI")
+        return
+    end
+
+    -- saveSettings – belt-and-suspenders on top of DocSettings patch.
+    local orig_saveSettings = ReaderUI.saveSettings
+    ReaderUI.saveSettings = function(self_rui, ...)
+        if M._active then
+            logger.warn("Incognito: BLOCKED ReaderUI:saveSettings()")
+            local Event = require("ui/event")
+            self_rui:handleEvent(Event:new("SaveSettings"))
+            return
+        end
+        return orig_saveSettings(self_rui, ...)
+    end
+
+    -- reloadDocument – block entirely during incognito.
+    -- KOReader calls this after style/font changes that need a full DOM
+    -- rebuild.  Allowing it would close the current session and reopen
+    -- the file outside incognito, leaking history and settings.
+    -- The rendering simply stays as-is; the user can reload after closing
+    -- incognito if they want the style change to persist.
+    local orig_reloadDocument = ReaderUI.reloadDocument
+    if orig_reloadDocument then
+        ReaderUI.reloadDocument = function(self_rui, ...)
+            if M._active then
+                logger.warn("Incognito: BLOCKED reloadDocument()")
+                local Notification = require("ui/widget/notification")
+                Notification:notify(_("Incognito: document reload suppressed"))
+                return
+            end
+            return orig_reloadDocument(self_rui, ...)
+        end
+    end
+
+    -- onClose – permanent class-level patch; runs for every ReaderUI close.
+    local orig_onClose = ReaderUI.onClose
+    ReaderUI.onClose = function(self_rui, ...)
+        if not M._active then
+            return orig_onClose(self_rui, ...)
+        end
+
+        local closed_file = M._file
+        -- Run original while M._active is still true → flushes inside blocked.
+        local ret = orig_onClose(self_rui, ...)
+
+        M._active = false
+        M._file   = nil
+        logger.warn("Incognito: DEACTIVATED, closed file:", closed_file)
+
+        if closed_file then
+            local ok_bl, BookList = pcall(require, "ui/widget/booklist")
+            if ok_bl and BookList and BookList.resetBookInfoCache then
+                BookList.resetBookInfoCache(closed_file)
+            end
+        end
+
+        return ret
+    end
+end)
+
 -- ── FileManager "Open Incognito" button ──────────────────────────────────────
--- Registered after a short delay so FileManager has time to initialise.
 UIManager:scheduleIn(0, function()
     local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
     if not ok_fm or not FileManager then
@@ -84,61 +162,13 @@ UIManager:scheduleIn(0, function()
                 callback = function()
                     M._active = true
                     M._file   = file
-                    logger.dbg("Incognito: activated for", file)
+                    logger.warn("Incognito: ACTIVATED for", file)
 
-                    -- Close the file dialog
                     local dialog = UIManager:getTopmostVisibleWidget()
-                    if dialog then
-                        UIManager:close(dialog)
-                    end
+                    if dialog then UIManager:close(dialog) end
 
                     UIManager:scheduleIn(0.1, function()
                         local ReaderUI = require("apps/reader/readerui")
-
-                        -- Patch init: intercept doc_settings.flush so nothing
-                        -- is written while incognito is active.
-                        local orig_init = ReaderUI.init
-                        ReaderUI.init = function(self_rui, ...)
-                            ReaderUI.init = orig_init          -- restore immediately
-                            orig_init(self_rui, ...)
-                            if M._active and self_rui.doc_settings then
-                                local ds = self_rui.doc_settings
-                                local orig_flush = ds.flush
-                                ds.flush = function(self_ds, ...)
-                                    if M._active then
-                                        logger.dbg("Incognito: suppressing doc_settings flush")
-                                        return
-                                    end
-                                    return orig_flush(self_ds, ...)
-                                end
-                            end
-                        end
-
-                        -- Patch onClose: deactivate incognito after the reader
-                        -- closes and clean up any cached book-info.
-                        local orig_onClose = ReaderUI.onClose
-                        ReaderUI.onClose = function(self_rui, ...)
-                            ReaderUI.onClose = orig_onClose    -- restore immediately
-                            local closed_file = M._file
-
-                            local ret = orig_onClose(self_rui, ...)
-
-                            M._active = false
-                            M._file   = nil
-                            logger.dbg("Incognito: deactivated, closed file:", closed_file)
-
-                            -- Purge any book-info that may have been cached in
-                            -- memory during the incognito session.
-                            if closed_file then
-                                local ok_bl, BookList = pcall(require, "ui/widget/booklist")
-                                if ok_bl and BookList and BookList.resetBookInfoCache then
-                                    BookList.resetBookInfoCache(closed_file)
-                                end
-                            end
-
-                            return ret
-                        end
-
                         ReaderUI:showReader(file)
                     end)
                 end,
@@ -147,21 +177,13 @@ UIManager:scheduleIn(0, function()
     end)
 end)
 
--- ── WidgetContainer wrapper (required by plugin loader) ──────────────────────
+-- ── WidgetContainer wrapper ───────────────────────────────────────────────────
 local Incognito = WidgetContainer:extend{
     name        = "incognito",
     is_doc_only = false,
 }
 
-function Incognito:onDispatcherRegisterActions()
-    -- No dispatcher actions needed for now; the entry point is the
-    -- file-dialog button registered above.
-end
-
-function Incognito:init()
-    self:onDispatcherRegisterActions()
-    -- Intentionally not adding a main-menu entry; the plugin works entirely
-    -- through the per-file dialog button.
-end
+function Incognito:onDispatcherRegisterActions() end
+function Incognito:init() self:onDispatcherRegisterActions() end
 
 return Incognito
