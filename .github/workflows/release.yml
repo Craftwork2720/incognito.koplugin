@@ -25,4 +25,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: incognito.koplugin.zip
-          generate_release_notes: true
+          body: |
+            ## Installation
+            1. Download `incognito.koplugin.zip`
+            2. Extract to `koreader/plugins/`
+            3. Restart KOReader
