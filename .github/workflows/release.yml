@@ -18,7 +18,7 @@ jobs:
       - name: Build ZIP
         run: |
           mkdir incognito.koplugin
-          cp main.lua _meta.lua incognito.koplugin/
+          cp -r main.lua _meta.lua LICENSE README.md icons incognito.koplugin/
           zip -r incognito.koplugin.zip incognito.koplugin/
 
       - name: Create GitHub Release
