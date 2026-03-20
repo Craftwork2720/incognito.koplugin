@@ -19,8 +19,9 @@ jobs:
         run: |
           mkdir incognito.koplugin
           cp -r main.lua _meta.lua LICENSE README.md icons incognito.koplugin/
+          echo "${{ github.ref_name }}" > incognito.koplugin/version.txt
           zip -r incognito.koplugin.zip incognito.koplugin/
-
+          
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
