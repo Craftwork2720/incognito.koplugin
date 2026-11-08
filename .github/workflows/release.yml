@@ -15,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Sync version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^\([[:space:]]*\)version = .*/\1version = \"$VERSION\",/" _meta.lua
+          grep -q "version = \"$VERSION\"" _meta.lua
+
       - name: Build ZIP
         run: |
           mkdir incognito.koplugin
