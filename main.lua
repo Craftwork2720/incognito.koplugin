@@ -51,6 +51,12 @@ if ok_rh and ReadHistory then
         return orig_addItem(self, file, ts, no_flush)
     end
 
+    local orig_updateLastBookTime = ReadHistory.updateLastBookTime
+    ReadHistory.updateLastBookTime = function(self, no_flush)
+        if M._active then return end
+        return orig_updateLastBookTime(self, no_flush)
+    end
+
     local orig_reload = ReadHistory.reload
     ReadHistory.reload = function(self, force_read)
         orig_reload(self, force_read)
